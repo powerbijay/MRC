@@ -117,6 +117,7 @@ def prepare(args):
             os.makedirs(dir_path)
 
     logger.info('Building vocabulary...')
+
     brc_data = BRCDataset(args.max_p_num, args.max_p_len, args.max_q_len,
                           args.train_files, args.dev_files, args.test_files)
     vocab = Vocab(lower=True)
@@ -130,7 +131,7 @@ def prepare(args):
                                                                             vocab.size()))
 
     logger.info('Assigning embeddings...')
-    vocab.randomly_init_embeddings(args.embed_size)
+    vocab.load_pretrained_embeddings('../data/demo/embeddings.txt')
 
     logger.info('Saving vocab...')
     with open(os.path.join(args.vocab_dir, 'vocab.data'), 'wb') as fout:
@@ -149,6 +150,10 @@ def train(args):
         vocab = pickle.load(fin)
     brc_data = BRCDataset(args.max_p_num, args.max_p_len, args.max_q_len,
                           args.train_files, args.dev_files)
+
+    # with open('ss','w') as sss:
+    #     sss.write(str(brc_data.__dict__))
+    #     sss.close()
     logger.info('Converting text into ids...')
     brc_data.convert_to_ids(vocab)
     logger.info('Initialize the model...')

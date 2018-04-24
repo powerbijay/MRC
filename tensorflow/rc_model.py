@@ -113,10 +113,14 @@ class RCModel(object):
                 'word_embeddings',
                 shape=(self.vocab.size(), self.vocab.embed_dim),
                 initializer=tf.constant_initializer(self.vocab.embeddings),
-                trainable=True
+                trainable=False
             )
             self.p_emb = tf.nn.embedding_lookup(self.word_embeddings, self.p)
             self.q_emb = tf.nn.embedding_lookup(self.word_embeddings, self.q)
+            # dim = 50
+            #
+            # self.p_emb = tf.contrib.layers.fully_connected(self.p_emb,dim,activation_fn=tf.nn.softmax)
+            # self.q_emb = tf.contrib.layers.fully_connected(self.q_emb, dim, activation_fn=tf.nn.softmax)
 
     def _encode(self):
         """
