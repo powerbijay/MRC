@@ -89,7 +89,28 @@ class AttentionFlowMatchLayer(object):
         Match the passage_encodes with question_encodes using Attention Flow Match algorithm
         """
         with tf.variable_scope('bidaf'):
-            sim_matrix = tf.matmul(passage_encodes, question_encodes, transpose_b=True)
+
+            # 修改代码##############################################
+            Ws = tf.get_variable(
+                'weight_for_sim_matrix',
+                shape=(self.hidden_size*6),
+                initializer=tf.contrib.layers.xavier_initializer(),
+                trainable=True
+            )
+
+            # Calculating similarity matrix
+            p_expand = tf.expand_dims(passage_encodes, 2)  # [batch,N,1,2*embed_dim]
+            q_expand = tf.expand_dims(question_encodes, 1)  # [batch,1,M,2*embed_dim]
+            p_pointWise_q = p_expand * q_expand  # [batch,N,M,2*embed_dim]
+
+            p_input = tf.tile(p_expand, [1, 1, tf.shape(question_encodes)[1], 1])
+            q_input = tf.tile(q_expand, [1, tf.shape(passage_encodes)[1], 1, 1])
+
+            concat_input = tf.concat([p_input, q_input, p_pointWise_q], -1)  # [batch,N,M,6*embed_dim]
+
+            sim_matrix = tf.reduce_sum(concat_input * Ws, axis=3)  # [batch,N,M]
+            ############################################################
+            # sim_matrix = tf.matmul(passage_encodes, question_encodes,transpose_b=True)
             context2question_attn = tf.matmul(tf.nn.softmax(sim_matrix, -1), question_encodes)
             b = tf.nn.softmax(tf.expand_dims(tf.reduce_max(sim_matrix, 2), 1), -1)
             question2context_attn = tf.tile(tf.matmul(b, passage_encodes),
