@@ -51,7 +51,7 @@ def parse_args():
     train_settings = parser.add_argument_group('train settings')
     train_settings.add_argument('--optim', default='adam',
                                 help='optimizer type')
-    train_settings.add_argument('--learning_rate', type=float, default=0.001,
+    train_settings.add_argument('--learning_rate', type=float, default=0.0001,
                                 help='learning rate')
     train_settings.add_argument('--weight_decay', type=float, default=0,
                                 help='weight decay')

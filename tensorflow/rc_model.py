@@ -33,6 +33,7 @@ from layers.basic_rnn import rnn
 from layers.match_layer import MatchLSTMLayer
 from layers.match_layer import AttentionFlowMatchLayer
 from layers.pointer_net import PointerNetDecoder
+from QAlayers import initializer, regularizer, residual_block, highway, conv, mask_logits, trilinear, total_params
 
 
 class RCModel(object):
@@ -104,6 +105,7 @@ class RCModel(object):
         self.end_label = tf.placeholder(tf.int32, [None])
         self.dropout_keep_prob = tf.placeholder(tf.float32)
 
+
     def _embed(self):
         """
         The embedding layer, question and passage share embeddings
@@ -121,15 +123,47 @@ class RCModel(object):
             #
             # self.p_emb = tf.contrib.layers.fully_connected(self.p_emb,dim,activation_fn=tf.nn.softmax)
             # self.q_emb = tf.contrib.layers.fully_connected(self.q_emb, dim, activation_fn=tf.nn.softmax)
+            #
+
+            self.p_emb = highway(self.p_emb, size = self.hidden_size, scope = "highway", reuse = None)
+            self.q_emb = highway(self.q_emb, size = self.hidden_size, scope = "highway", reuse = True)
+
+            if self.use_dropout:
+                self.p_emb = tf.nn.dropout(self.p_emb, self.dropout_keep_prob)
+                self.q_emb = tf.nn.dropout(self.q_emb, self.dropout_keep_prob)
+
+
+
 
     def _encode(self):
         """
         Employs two Bi-LSTMs to encode passage and question separately
         """
-        with tf.variable_scope('passage_encoding'):
-            self.sep_p_encodes, _ = rnn('bi-lstm', self.p_emb, self.p_length, self.hidden_size)
-        with tf.variable_scope('question_encoding'):
-            self.sep_q_encodes, _ = rnn('bi-lstm', self.q_emb, self.q_length, self.hidden_size)
+        self.num_heads = 1
+        with tf.variable_scope("Embedding_Encoder_Layer"):
+            self.sep_p_encodes = residual_block(self.p_emb,
+                num_blocks = 1,
+                num_conv_layers = 4,
+                kernel_size = 7,
+                num_filters = self.hidden_size,
+                num_heads = self.num_heads,
+                seq_len = self.p_length,
+                scope = "Encoder_Residual_Block",
+                bias = False,
+                dropout = 1-self.dropout_keep_prob)
+
+            self.sep_q_encodes = residual_block(self.q_emb,
+                num_blocks = 1,
+                num_conv_layers = 4,
+                kernel_size = 7,
+                num_filters = self.hidden_size,
+                num_heads = self.num_heads,
+                seq_len = self.q_length,
+                scope = "Encoder_Residual_Block",
+                reuse = True, # Share the weights between passage and question
+                bias = False,
+                dropout = 1-self.dropout_keep_prob)
+
         if self.use_dropout:
             self.sep_p_encodes = tf.nn.dropout(self.sep_p_encodes, self.dropout_keep_prob)
             self.sep_q_encodes = tf.nn.dropout(self.sep_q_encodes, self.dropout_keep_prob)
@@ -153,11 +187,34 @@ class RCModel(object):
         """
         Employs Bi-LSTM again to fuse the context information after match layer
         """
-        with tf.variable_scope('fusion'):
-            self.fuse_p_encodes, _ = rnn('bi-lstm', self.match_p_encodes, self.p_length,
-                                         self.hidden_size, layer_num=1)
+        # with tf.variable_scope('fusion'):
+        #     self.fuse_p_encodes, _ = rnn('bi-lstm', self.match_p_encodes, self.p_length,
+        #                                  self.hidden_size, layer_num=1)
+        #     if self.use_dropout:
+        #         self.fuse_p_encodes = tf.nn.dropout(self.fuse_p_encodes, self.dropout_keep_prob)
+
+        with tf.variable_scope("Model_Encoder_Layer"):
+            self.enc = [conv(self.match_p_encodes, self.hidden_size, name = "input_projection")]
+            for i in range(3):
+                if i % 2 == 0: # dropout every 2 blocks
+                    self.enc[i] = tf.nn.dropout(self.enc[i], self.dropout_keep_prob)
+                self.enc.append(
+                    residual_block(self.enc[i],
+                        num_blocks = 7,
+                        num_conv_layers = 2,
+                        kernel_size = 5,
+                        num_filters = self.hidden_size,
+                        num_heads = self.num_heads,
+                        seq_len = self.p_length,
+                        scope = "Model_Encoder",
+                        bias = False,
+                        reuse = True if i > 0 else None)
+                )
+            self.fuse_p_encodes = conv(tf.concat([self.enc[1], self.enc[3]], axis=-1), 2*self.hidden_size, bias=False,name = "fuse")
+
             if self.use_dropout:
                 self.fuse_p_encodes = tf.nn.dropout(self.fuse_p_encodes, self.dropout_keep_prob)
+
 
     def _decode(self):
         """
@@ -166,6 +223,7 @@ class RCModel(object):
         Note that we concat the fuse_p_encodes for the passages in the same document.
         And since the encodes of queries in the same document is same, we select the first one.
         """
+
         with tf.variable_scope('same_question_concat'):
             batch_size = tf.shape(self.start_label)[0]
             concat_passage_encodes = tf.reshape(
@@ -174,7 +232,7 @@ class RCModel(object):
             )
             no_dup_question_encodes = tf.reshape(
                 self.sep_q_encodes,
-                [batch_size, -1, tf.shape(self.sep_q_encodes)[1], 2 * self.hidden_size]
+                [batch_size, -1, tf.shape(self.sep_q_encodes)[1], self.hidden_size]
             )[0:, 0, 0:, 0:]
         decoder = PointerNetDecoder(self.hidden_size)
         self.start_probs, self.end_probs = decoder.decode(concat_passage_encodes,
@@ -305,6 +363,7 @@ class RCModel(object):
                          self.dropout_keep_prob: 1.0}
             start_probs, end_probs, loss = self.sess.run([self.start_probs,
                                                           self.end_probs, self.loss], feed_dict)
+
 
             total_loss += loss * len(batch['raw_data'])
             total_num += len(batch['raw_data'])
